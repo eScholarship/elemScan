@@ -28,6 +28,8 @@ $jscholDir  = getRealPath "#{$homeDir}/eschol5/jschol"
 
 # Special mode to print but don't execute changes.
 $testMode = ARGV.delete('--test')
+# Normal mode to execute changes
+$goMode = ARGV.delete('--test')
 
 # Internal libraries
 require "#{$espylib}/xmlutil.rb"
@@ -38,6 +40,9 @@ $escholServer = ENV['ESCHOL_FRONTEND_URL'] || raise("missing env ESCHOL_FRONTEND
 $apiInfo = { host:     ENV['ELEMENTS_API_URL'] || raise("missing env ELEMENTS_API_URL"),
              username: ENV['ELEMENTS_API_USERNAME'] || raise("missing env ELEMENTS_API_USERNAME"),
              password: ENV['ELEMENTS_API_PASSWORD'] || raise("missing env ELEMENTS_API_PASSWORD") }
+
+# Write out a spreadsheet of the results as we go along
+$resultsSpreadsheet = nil
 
 # Flush stdout after each write
 STDOUT.sync = true
@@ -104,7 +109,7 @@ end
 
 #################################################################################################
 # Scan for changes to one publication
-def scanPub(item)
+def scanPub(unit, item)
   ark = item['id']
   pubID = item['localIDs'].select{ |pair| pair['scheme'] == 'OA_PUB_ID' }.dig(0, 'id')
   pubID or raise("can't find OA_PUB_ID in pub whose source is 'oa_harvester'")
@@ -123,7 +128,7 @@ def scanPub(item)
         words1 = extractWords(feedTitle)
         words2 = extractWords(item['title'])
         if (words1 & words2).size <= ((words1.size + words2.size)/4)
-          puts "  #{ark} (pub #{pubID)}: skipping much-changed title: #{item['title'].inspect} vs #{feedTitle.inspect}"
+          puts "  #{ark} (pub #{pubID}): skipping much-changed title: #{item['title'].inspect} vs #{feedTitle.inspect}"
           return
         end
       end
@@ -139,14 +144,26 @@ def scanPub(item)
       end
 
       # We have new grant info. Update it in the item.
-      puts "#{ark} (pub #{pubID}): funding differs."
-      puts "  old=#{itemSum.inspect}"
-      puts "  new=#{feedSum.inspect}"
+      if itemSum.empty?
+        puts "#{ark} (pub #{pubID}): funding added: #{feedSum.inspect}"
+        $resultsSpreadsheet.puts("#{unit}\t#{ark}\t#{pubID}\tadded\t#{feedSum.sub('"', "'").inspect}")
+      elsif feedSum.empty?
+        puts "#{ark} (pub #{pubID}): funding removed: #{itemSum.inspect}"
+        $resultsSpreadsheet.puts("#{unit}\t#{ark}\t#{pubID}\tremoved\t#{itemSum.sub('"', "'").inspect}")
+      else
+        puts "#{ark} (pub #{pubID}): funding changed from #{itemSum.inspect} to #{feedSum.inspect}."
+        $resultsSpreadsheet.puts("#{unit}\t#{ark}\t#{pubID}\tchanged\t" +
+                                 "from #{itemSum.sub('"', "'").inspect} to #{feedSum.sub('"', "'").inspect}")
+      end
+      $resultsSpreadsheet.flush
       if $testMode
         puts "  (not changing due to --test mode)"
-      else
+      elsif $goMode
         updateGrants(ark, feedGrants)
         puts "  Updated."
+      else
+        puts "Error: either --test or --go must be specified."
+        exit 1
       end
     end
   rescue
@@ -185,7 +202,7 @@ def scanAll
       total ||= data['total']
       nDone == 0 and puts "Scanning #{total} pubs for #{unit}."
       data['nodes'].each { |item|
-        scanPub(item)
+        scanPub(unit, item)
         nDone += 1
       }
       puts "Scanned #{nDone} of #{total} pubs for #{unit}."
@@ -193,8 +210,14 @@ def scanAll
       break if !more
     end
   }
+
+  puts "All done."
 end
 
 #################################################################################################
 # The main routine
-scanAll
+File.open("#{$scriptDir}/results.csv", "w") { |io|
+  io.puts "unit\titem\tpub\taction\tfunding\n"
+  $resultsSpreadsheet = io
+  scanAll
+}
