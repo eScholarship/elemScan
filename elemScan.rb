@@ -113,6 +113,7 @@ def scanPub(unit, item)
   ark = item['id']
   pubID = item['localIDs'].select{ |pair| pair['scheme'] == 'OA_PUB_ID' }.dig(0, 'id')
   pubID or raise("can't find OA_PUB_ID in pub whose source is 'oa_harvester'")
+  dateAdded = item['added']
   begin
 
     # Retrieve grant info from Elements
@@ -143,17 +144,17 @@ def scanPub(unit, item)
         return
       end
 
-      # We have new grant info. Update it in the item.
+      # We have new grant info. Update it in the item and add a spreadsheet line.
+      $resultsSpreadsheet.print("#{unit}\t#{ark}\t#{dateAdded}\t#{pubID}\t")
       if itemSum.empty?
         puts "#{ark} (pub #{pubID}): funding added: #{feedSum.inspect}"
-        $resultsSpreadsheet.puts("#{unit}\t#{ark}\t#{pubID}\tadded\t#{feedSum.sub('"', "'").inspect}")
+        $resultsSpreadsheet.puts("added\t#{feedSum.sub('"', "'").inspect}")
       elsif feedSum.empty?
         puts "#{ark} (pub #{pubID}): funding removed: #{itemSum.inspect}"
-        $resultsSpreadsheet.puts("#{unit}\t#{ark}\t#{pubID}\tremoved\t#{itemSum.sub('"', "'").inspect}")
+        $resultsSpreadsheet.puts("removed\t#{itemSum.sub('"', "'").inspect}")
       else
         puts "#{ark} (pub #{pubID}): funding changed from #{itemSum.inspect} to #{feedSum.inspect}."
-        $resultsSpreadsheet.puts("#{unit}\t#{ark}\t#{pubID}\tchanged\t" +
-                                 "from #{itemSum.sub('"', "'").inspect} to #{feedSum.sub('"', "'").inspect}")
+        $resultsSpreadsheet.puts("changed\tfrom #{itemSum.sub('"', "'").inspect} to #{feedSum.sub('"', "'").inspect}")
       end
       $resultsSpreadsheet.flush
       if $testMode
@@ -183,7 +184,7 @@ def scanAll
         nodes {
           id
           title
-          abstract
+          added
           grants
           localIDs {
             scheme
@@ -217,7 +218,7 @@ end
 #################################################################################################
 # The main routine
 File.open("#{$scriptDir}/results.csv", "w") { |io|
-  io.puts "unit\titem\tpub\taction\tfunding\n"
+  io.puts "unit\titem\tdateAdded\tpub\taction\tfunding\n"
   $resultsSpreadsheet = io
   scanAll
 }
